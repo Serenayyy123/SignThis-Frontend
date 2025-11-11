@@ -1,0 +1,204 @@
+  <!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metamask 组织者签到系统 (SignThis)</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+    <style>
+        /* (样式与之前版本保持一致，此处省略以节省空间) */
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f7f6; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #007bff; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h2 { color: #555; margin-top: 25px; }
+        label { display: block; margin-top: 15px; font-weight: bold; color: #555; }
+        input[type="text"] { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; margin-top: 20px; width: 100%; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { background-color: #0056b3; }
+        .result-box { background: #e9ecef; padding: 15px; border-radius: 4px; margin-top: 20px; word-break: break-all; }
+        #connectedAddress { font-weight: bold; color: green; }
+        #log { margin-top: 20px; padding: 10px; border-radius: 4px; display: none; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Metamask 授权签到系统</h1>
+    
+    <div id="log" class="warning" style="display: block;">
+        <strong>重要提示:</strong> 运行在 Sepolia 网络。请使用 **Metamask** 或其他兼容 **EVM** 的浏览器插件钱包，并确保切换到部署合约的 **组织者地址**。
+    </div>
+    
+    <h2>钱包状态</h2>
+    <p>连接地址: <span id="connectedAddress">未连接</span></p>
+    <button onclick="connectWallet()">连接 Web3 钱包 (例如 Metamask)</button>
+    
+    <hr>
+
+    <h2>配置与操作</h2>
+    <label for="contractAddress">合约地址 (Sepolia)</label>
+    <input type="text" id="contractAddress" placeholder="输入已部署的 SignThis 合约地址 (0x...)" value="">
+
+    <label for="eventName">事件名称 (必须与合约构造函数一致)</label>
+    <input type="text" id="eventName" placeholder="例如: Web3 Conference 2024" value="">
+    
+    <label for="attendeeAddress">目标签到地址 (参与者地址)</label>
+    <input type="text" id="attendeeAddress" placeholder="输入参与者地址 (0x...)">
+
+    <button onclick="signAndCheckIn()">🚀 一键签名并签到</button>
+    
+    <div id="dynamicLog" class="info" style="display: none;"></div>
+</div>
+
+<script>
+    // 合约 ABI (只包含需要用到的函数)
+    const contractABI = [
+        "function checkInWithSignature(address attendee, uint8 v, bytes32 r, bytes32 s) external",
+        "function organizer() external view returns (address)", // 用于获取组织者地址
+    ];
+
+    let provider;
+    let signer;
+    const sepoliaChainId = '0xaa36a7'; // Sepolia chain ID
+
+    // --- 辅助函数 ---
+    // (日志和输入函数与 V1 保持一致)
+    function logMessage(message, type = 'info') {
+        const log = document.getElementById('dynamicLog');
+        log.style.display = 'block';
+        log.className = type; 
+        log.innerHTML = `<p><strong>${type.toUpperCase()}:</strong> ${message}</p>` + log.innerHTML;
+    }
+
+    function clearLog() {
+        document.getElementById('dynamicLog').innerHTML = '';
+        document.getElementById('dynamicLog').style.display = 'none';
+    }
+
+    function getInputs() {
+        const contractAddress = document.getElementById('contractAddress').value.trim();
+        const eventName = document.getElementById('eventName').value.trim();
+        const attendeeAddress = document.getElementById('attendeeAddress').value.trim();
+        return { contractAddress, eventName, attendeeAddress };
+    }
+    
+    // --- 核心功能：连接钱包 (优化了连接逻辑) ---
+
+    async function connectWallet() {
+        clearLog();
+        document.getElementById('connectedAddress').textContent = '连接中...';
+
+        if (typeof window.ethereum === 'undefined') {
+            document.getElementById('connectedAddress').textContent = '未安装插件';
+            return logMessage("❌ 浏览器中未检测到 Web3 钱包 (window.ethereum)。请安装 Metamask 等插件。", 'error');
+        }
+
+        try {
+            // 请求连接钱包
+            await window.ethereum.request({ method: 'eth_requestAccounts' });
+            
+            provider = new ethers.providers.Web3Provider(window.ethereum);
+            signer = provider.getSigner();
+            
+            const connectedAddr = await signer.getAddress();
+            document.getElementById('connectedAddress').textContent = connectedAddr;
+            
+            // 检查网络是否为 Sepolia
+            const network = await provider.getNetwork();
+            if (network.chainId !== 11155111) { // 11155111 是 Sepolia 的 ChainID
+                 logMessage(`⚠️ 当前网络不是 Sepolia (Chain ID: ${network.chainId})。请在钱包中切换到 Sepolia。`, 'warning');
+            } else {
+                 logMessage(`✅ 钱包连接成功！地址: ${connectedAddr}。网络: Sepolia。`, 'success');
+            }
+
+
+            // 监听 Metamask 账户或网络变化，变化时刷新页面重新加载状态
+            window.ethereum.on('accountsChanged', () => location.reload());
+            window.ethereum.on('chainChanged', () => location.reload());
+
+        } catch (error) {
+            console.error(error);
+            document.getElementById('connectedAddress').textContent = '连接失败';
+            logMessage(`❌ 连接钱包失败: ${error.message}. 请检查 Metamask 是否解锁或拒绝了连接。`, 'error');
+        }
+    }
+
+    // --- 核心操作：签名并签到 ---
+
+    async function signAndCheckIn() {
+        clearLog();
+        if (!signer) {
+            return logMessage("❌ 请先点击 '连接 Web3 钱包' 并确保连接成功。", 'error');
+        }
+
+        try {
+            const { contractAddress, eventName, attendeeAddress } = getInputs();
+            
+            // 基础输入验证
+            if (!contractAddress || !eventName || !attendeeAddress) {
+                return logMessage("请填写所有配置信息。", 'error');
+            }
+            if (!ethers.utils.isAddress(attendeeAddress)) {
+                return logMessage("无效的参与者地址。", 'error');
+            }
+
+            // 1. 检查连接的钱包是否是组织者
+            const contract = new ethers.Contract(contractAddress, contractABI, provider);
+            const requiredOrganizer = await contract.organizer();
+            const currentSignerAddress = await signer.getAddress();
+
+            if (currentSignerAddress.toLowerCase() !== requiredOrganizer.toLowerCase()) {
+                return logMessage(`⚠️ 钱包地址不是组织者！合约组织者地址: ${requiredOrganizer}。请在钱包中切换到该地址。`, 'error');
+            }
+            logMessage(`连接的地址 (${currentSignerAddress}) 确认为合约组织者。继续签名...`, 'info');
+
+
+            // 2. 构造消息哈希 (与Solidity合约中的messageHash一致)
+            const messageHash = ethers.utils.solidityKeccak256(
+                ['address', 'address', 'string'],
+                [attendeeAddress, contractAddress, eventName]
+            );
+
+            // 3. Metamask 签名
+            logMessage("等待钱包签名授权。请在您的钱包中确认签名请求...", 'warning');
+            const signature = await signer.signMessage(
+                ethers.utils.arrayify(messageHash)
+            );
+
+            // 4. 分离签名组件
+            const { v, r, s } = ethers.utils.splitSignature(signature);
+            logMessage("✅ 签名成功！现在发送签到交易。", 'success');
+
+
+            // 5. 提交签到交易 (组织者支付Gas)
+            const contractWithSigner = contract.connect(signer);
+            logMessage("等待钱包交易确认。请在您的钱包中确认交易...", 'warning');
+
+            const tx = await contractWithSigner.checkInWithSignature(
+                attendeeAddress,
+                v,
+                r,
+                s
+            );
+
+            logMessage(`等待交易确认 (Hash: ${tx.hash})...`, 'warning');
+            
+            // 6. 等待交易完成
+            const receipt = await tx.wait();
+            logMessage(`🎉 签到成功！交易已确认。交易地址: <a href="https://sepolia.etherscan.io/tx/${tx.hash}" target="_blank">${tx.hash}</a>`, 'success');
+
+        } catch (error) {
+            console.error(error);
+            logMessage(`❌ 签到失败: ${error.message || error.code || '未知错误'}`, 'error');
+        }
+    }
+    
+    // 页面加载完成后，自动尝试连接钱包
+    document.addEventListener('DOMContentLoaded', connectWallet);
+</script>
+</body>
+</html>
