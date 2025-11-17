@@ -134,7 +134,6 @@
 </div>
 
 <script>
-    // 检查 Ethers.js 是否已加载 
     const { ethers } = window;
     
     // ==========================================================
@@ -146,7 +145,6 @@
 
     const DECIMALS = 18;
     
-    // 使用 Ethers.js 的 MaxUint256，如果 Ethers 加载成功
     const MAX_UINT256 = ethers ? ethers.MaxUint256 : (2n**256n - 1n); 
     const SLIPPAGE_TOLERANCE = 0.995; 
     
@@ -248,7 +246,7 @@
     }
 
     // ==========================================================
-    // 2. 连接钱包 (最终兼容版)
+    // 2. 连接钱包 (兼容版)
     // ==========================================================
     async function connectWallet() {
         if (typeof ethers === 'undefined' || !window.ethereum) {
@@ -259,7 +257,6 @@
         try {
             updateStatus("连接中，请在钱包中确认授权...");
             
-            // 使用原始请求方法连接 (兼容 OneKey/MetaMask)
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
             
             if (accounts && accounts.length > 0) {
@@ -272,7 +269,6 @@
                  dom.connectButton.disabled = true;
                  updateStatus(`连接成功! 账户: ${account}`);
                  
-                 // 监听钱包变动
                  window.ethereum.on('accountsChanged', () => window.location.reload());
                  window.ethereum.on('chainChanged', () => window.location.reload());
 
@@ -324,7 +320,6 @@
 
         updateStatus(`正在发送 ${tokenName} 授权交易...`);
         try {
-            // 授权最大数量
             const tx = await tokenContract.approve(AMM_ADDRESS, MAX_UINT256);
             await tx.wait();
             updateStatus(`${tokenName} 授权成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
@@ -335,29 +330,33 @@
     }
 
     // ==========================================================
-    // 3. 修正后的添加流动性函数 (解决 revert 错误的关键)
+    // 3. 修正后的添加流动性函数 (解决数字转换问题)
     // ==========================================================
     async function handleAddLiquidity() {
         const { ammContract } = getContracts(true);
         const inputA = dom.inputAAdd.value;
         const inputB = dom.inputBAdd.value;
 
-        // 严格检查输入是否为空、无效或零
-        if (!ammContract || !inputA || !inputB || isNaN(parseFloat(inputA)) || isNaN(parseFloat(inputB))) {
-            updateStatus("请输入有效的代币数量。", true);
-            return;
-        }
-        if (parseFloat(inputA) <= 0 || parseFloat(inputB) <= 0) {
-            updateStatus("添加流动性数量不能为零。", true);
+        const numA = parseFloat(inputA);
+        const numB = parseFloat(inputB);
+        
+        if (!ammContract || isNaN(numA) || isNaN(numB) || numA <= 0 || numB <= 0) {
+            updateStatus("请输入有效的代币数量 (大于零)。", true);
             return;
         }
 
         updateStatus("正在添加流动性...");
         try {
-            const amountA_wei = ethers.parseUnits(inputA, DECIMALS);
-            const amountB_wei = ethers.parseUnits(inputB, DECIMALS);
+            // 🚨 关键修复：使用 toFixed(DECIMALS) 确保浮点数转换成精确的字符串，防止出现科学计数法或精度损失导致 parseUnits 失败。
+            const amountA_str = numA.toFixed(DECIMALS > 20 ? 20 : DECIMALS); 
+            const amountB_str = numB.toFixed(DECIMALS > 20 ? 20 : DECIMALS); 
 
-            // 合约调用 (如果授权不足或余额不足，将在此处引发 Gas 估算错误)
+            const amountA_wei = ethers.parseUnits(amountA_str, DECIMALS);
+            const amountB_wei = ethers.parseUnits(amountB_str, DECIMALS);
+
+            // 再次检查转换后的值是否符合预期 (例如，输入10不应该变成10000个代币的 Wei)
+            console.log(`Debug: Token A Wei: ${amountA_wei.toString()}, Token B Wei: ${amountB_wei.toString()}`);
+
             const tx = await ammContract.addLiquidity(amountA_wei, amountB_wei);
             await tx.wait();
             
@@ -365,8 +364,9 @@
             fetchPoolData(); 
         } catch (error) {
             console.error("添加流动性失败:", error);
-            // 明确提示用户最可能的原因
-            updateStatus("添加流动性失败。**请先确保已点击 '授权 Token A' 和 '授权 Token B' 且交易成功，并确认您的钱包代币余额充足。**", true);
+            
+            // 提示授权/余额不足
+            updateStatus(`添加流动性失败。**请确保您的授权金额大于输入金额，且您的钱包代币余额充足。**`, true);
         }
     }
     
@@ -375,14 +375,17 @@
         const { ammContract } = getContracts(true);
         const lpInput = dom.inputLPRemove.value;
         
-        if (!ammContract || !lpInput || isNaN(parseFloat(lpInput)) || parseFloat(lpInput) <= 0) {
+        const numLP = parseFloat(lpInput);
+
+        if (!ammContract || isNaN(numLP) || numLP <= 0) {
             updateStatus("请输入要移除的 LP 代币数量。", true);
             return;
         }
 
         updateStatus("正在移除流动性...");
         try {
-            const lpAmount_wei = ethers.parseUnits(lpInput, DECIMALS);
+            const lpAmount_str = numLP.toFixed(DECIMALS > 20 ? 20 : DECIMALS);
+            const lpAmount_wei = ethers.parseUnits(lpAmount_str, DECIMALS);
 
             const tx = await ammContract.removeLiquidity(lpAmount_wei);
             await tx.wait();
@@ -399,16 +402,17 @@
     async function handleSwap() {
         const { ammContract } = getContracts(true);
         const amountIn = dom.inputSwap.value;
+        const numIn = parseFloat(amountIn);
 
-        if (!ammContract || !amountIn || isNaN(parseFloat(amountIn)) || parseFloat(amountIn) <= 0) {
+        if (!ammContract || isNaN(numIn) || numIn <= 0) {
             updateStatus("请输入有效的兑换数量。", true);
             return;
         }
         
         updateStatus("正在计算最小输出量...");
-        const amountIn_wei = ethers.parseUnits(amountIn, DECIMALS);
+        const amountIn_str = numIn.toFixed(DECIMALS > 20 ? 20 : DECIMALS);
+        const amountIn_wei = ethers.parseUnits(amountIn_str, DECIMALS);
         
-        // 确保储备金数据有效
         if (reserves.A === 0 || reserves.B === 0) {
             updateStatus("池子储备金为零，无法进行兑换。", true);
             return;
@@ -420,7 +424,6 @@
         const reserveIn = isAtoB ? reserveA_raw : reserveB_raw;
         const reserveOut = isAtoB ? reserveB_raw : reserveA_raw;
         
-        // 计算滑点
         const FEE_NUMERATOR = 997n; 
         const FEE_DENOMINATOR = 1000n;
         
@@ -431,17 +434,14 @@
         
         const amountOut_wei = numerator / denominator;
         
-        // 应用滑点容忍度
         const minOut_wei = amountOut_wei * BigInt(Math.floor(SLIPPAGE_TOLERANCE * 10000)) / 10000n; 
         
         updateStatus("正在发送兑换交易...");
         try {
             let tx;
             if (isAtoB) {
-                // 兑换 Token A -> Token B
                 tx = await ammContract.swapAforB(amountIn_wei, minOut_wei);
             } else {
-                // 兑换 Token B -> Token A
                 tx = await ammContract.swapBforA(amountIn_wei, minOut_wei);
             }
             
