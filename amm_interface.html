@@ -134,7 +134,7 @@
 </div>
 
 <script>
-    // 检查 Ethers.js 是否已加载 (现在使用 cdnjs 链接)
+    // 检查 Ethers.js 是否已加载 
     const { ethers } = window;
     
     // ==========================================================
@@ -145,8 +145,8 @@
     const TOKEN_B_ADDRESS = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 
     const DECIMALS = 18;
-    // 使用 BigInt 代替 ethers.MaxUint256，以防 Ethers.js 加载失败
-    // 但如果 Ethers.js 失败，下面的所有代码都无法运行
+    
+    // 使用 Ethers.js 的 MaxUint256，如果 Ethers 加载成功
     const MAX_UINT256 = ethers ? ethers.MaxUint256 : (2n**256n - 1n); 
     const SLIPPAGE_TOLERANCE = 0.995; 
     
@@ -272,6 +272,7 @@
                  dom.connectButton.disabled = true;
                  updateStatus(`连接成功! 账户: ${account}`);
                  
+                 // 监听钱包变动
                  window.ethereum.on('accountsChanged', () => window.location.reload());
                  window.ethereum.on('chainChanged', () => window.location.reload());
 
@@ -290,7 +291,7 @@
         }
     }
 
-    // 以下函数与之前版本相同
+    // 获取池子状态和 LP 余额
     async function fetchPoolData() {
         const { ammContract } = getContracts(false); 
         if (!ammContract) return;
@@ -317,27 +318,37 @@
         }
     }
 
+    // 授权代币
     async function handleApprove(tokenContract, tokenName) {
         if (!signer) return;
 
         updateStatus(`正在发送 ${tokenName} 授权交易...`);
         try {
+            // 授权最大数量
             const tx = await tokenContract.approve(AMM_ADDRESS, MAX_UINT256);
             await tx.wait();
             updateStatus(`${tokenName} 授权成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
         } catch (error) {
             console.error(`${tokenName} 授权失败:`, error);
-            updateStatus(`${tokenName} 授权失败。`, true);
+            updateStatus(`${tokenName} 授权失败。请确保网络畅通且有 Gas 费用。`, true);
         }
     }
 
+    // ==========================================================
+    // 3. 修正后的添加流动性函数 (解决 revert 错误的关键)
+    // ==========================================================
     async function handleAddLiquidity() {
         const { ammContract } = getContracts(true);
         const inputA = dom.inputAAdd.value;
         const inputB = dom.inputBAdd.value;
 
-        if (!ammContract || !inputA || !inputB) {
+        // 严格检查输入是否为空、无效或零
+        if (!ammContract || !inputA || !inputB || isNaN(parseFloat(inputA)) || isNaN(parseFloat(inputB))) {
             updateStatus("请输入有效的代币数量。", true);
+            return;
+        }
+        if (parseFloat(inputA) <= 0 || parseFloat(inputB) <= 0) {
+            updateStatus("添加流动性数量不能为零。", true);
             return;
         }
 
@@ -346,6 +357,7 @@
             const amountA_wei = ethers.parseUnits(inputA, DECIMALS);
             const amountB_wei = ethers.parseUnits(inputB, DECIMALS);
 
+            // 合约调用 (如果授权不足或余额不足，将在此处引发 Gas 估算错误)
             const tx = await ammContract.addLiquidity(amountA_wei, amountB_wei);
             await tx.wait();
             
@@ -353,15 +365,17 @@
             fetchPoolData(); 
         } catch (error) {
             console.error("添加流动性失败:", error);
-            updateStatus("添加流动性失败。请确认已授权且余额充足。", true);
+            // 明确提示用户最可能的原因
+            updateStatus("添加流动性失败。**请先确保已点击 '授权 Token A' 和 '授权 Token B' 且交易成功，并确认您的钱包代币余额充足。**", true);
         }
     }
     
+    // 移除流动性
     async function handleRemoveLiquidity() {
         const { ammContract } = getContracts(true);
         const lpInput = dom.inputLPRemove.value;
         
-        if (!ammContract || !lpInput) {
+        if (!ammContract || !lpInput || isNaN(parseFloat(lpInput)) || parseFloat(lpInput) <= 0) {
             updateStatus("请输入要移除的 LP 代币数量。", true);
             return;
         }
@@ -377,28 +391,36 @@
             fetchPoolData();
         } catch (error) {
             console.error("移除流动性失败:", error);
-            updateStatus("移除流动性失败。", true);
+            updateStatus("移除流动性失败。请确认 LP 代币余额充足。", true);
         }
     }
     
+    // 兑换功能
     async function handleSwap() {
         const { ammContract } = getContracts(true);
         const amountIn = dom.inputSwap.value;
 
-        if (!ammContract || !amountIn) {
-            updateStatus("请输入兑换数量。", true);
+        if (!ammContract || !amountIn || isNaN(parseFloat(amountIn)) || parseFloat(amountIn) <= 0) {
+            updateStatus("请输入有效的兑换数量。", true);
             return;
         }
         
         updateStatus("正在计算最小输出量...");
         const amountIn_wei = ethers.parseUnits(amountIn, DECIMALS);
         
-        const reserveA_raw = ethers.parseUnits(reserves.A, DECIMALS);
-        const reserveB_raw = ethers.parseUnits(reserves.B, DECIMALS);
+        // 确保储备金数据有效
+        if (reserves.A === 0 || reserves.B === 0) {
+            updateStatus("池子储备金为零，无法进行兑换。", true);
+            return;
+        }
+
+        const reserveA_raw = ethers.parseUnits(reserves.A.toString(), DECIMALS);
+        const reserveB_raw = ethers.parseUnits(reserves.B.toString(), DECIMALS);
 
         const reserveIn = isAtoB ? reserveA_raw : reserveB_raw;
         const reserveOut = isAtoB ? reserveB_raw : reserveA_raw;
         
+        // 计算滑点
         const FEE_NUMERATOR = 997n; 
         const FEE_DENOMINATOR = 1000n;
         
@@ -409,14 +431,17 @@
         
         const amountOut_wei = numerator / denominator;
         
+        // 应用滑点容忍度
         const minOut_wei = amountOut_wei * BigInt(Math.floor(SLIPPAGE_TOLERANCE * 10000)) / 10000n; 
         
         updateStatus("正在发送兑换交易...");
         try {
             let tx;
             if (isAtoB) {
+                // 兑换 Token A -> Token B
                 tx = await ammContract.swapAforB(amountIn_wei, minOut_wei);
             } else {
+                // 兑换 Token B -> Token A
                 tx = await ammContract.swapBforA(amountIn_wei, minOut_wei);
             }
             
@@ -429,12 +454,15 @@
         }
     }
 
-    // 8. 事件监听器
+    // 4. 事件监听器
     dom.connectButton.addEventListener('click', connectWallet);
     dom.approveA.addEventListener('click', () => handleApprove(getContracts(true).tokenAContract, "Token A"));
     dom.approveB.addEventListener('click', () => handleApprove(getContracts(true).tokenBContract, "Token B"));
     dom.addLiquidityBtn.addEventListener('click', handleAddLiquidity);
     dom.removeLiquidityBtn.addEventListener('click', handleRemoveLiquidity);
+    dom.executeSwapBtn.addEventListener('click', handleSwap);
+    
+    // 兑换方向切换
     dom.swapAtoBBtn.addEventListener('click', () => {
         isAtoB = true;
         dom.swapAtoBBtn.className = 'btn-active-direction';
@@ -449,7 +477,6 @@
         dom.executeSwapBtn.textContent = '执行兑换 (B → A)';
         dom.inputSwap.placeholder = '输入 Token B 数量';
     });
-    dom.executeSwapBtn.addEventListener('click', handleSwap);
 
     // 初始化时禁用所有功能按钮
     document.addEventListener('DOMContentLoaded', () => {
