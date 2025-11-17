@@ -139,7 +139,9 @@
     // ==========================================================
     // 1. 您的配置信息 
     // ==========================================================
-    const AMM_ADDRESS = "0x855e2fB422837431244E6cD3e21Fb56C23be006A";
+    // 🚨 关键更新：AMM 合约地址
+    const AMM_ADDRESS = "0xb1C2908d9Ac467f1483Be7B2A1aaeE947452F265";
+    
     const TOKEN_A_ADDRESS = "0x113ecc7d890ced42a4822877370eff5db5fc6b06";
     const TOKEN_B_ADDRESS = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 
@@ -156,7 +158,7 @@
         "function decimals() external view returns (uint8)", 
     ];
 
-    // 您的 AMM 合约的完整 JSON ABI
+    // 您的 AMM 合约的完整 JSON ABI (无需修改)
     const AMM_ABI = [
         {"inputs": [{"internalType": "uint256", "name": "amountA", "type": "uint256"}, {"internalType": "uint256", "name": "amountB", "type": "uint256"}], "name": "addLiquidity", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
         {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
@@ -320,7 +322,8 @@
 
         updateStatus(`正在发送 ${tokenName} 授权交易...`);
         try {
-            const tx = await tokenContract.approve(AMM_ADDRESS, MAX_UINT256);
+            // 授权最大金额，避免重复授权
+            const tx = await tokenContract.approve(AMM_ADDRESS, MAX_UINT256); 
             await tx.wait();
             updateStatus(`${tokenName} 授权成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
         } catch (error) {
@@ -330,7 +333,7 @@
     }
 
     // ==========================================================
-    // 3. 修正后的添加流动性函数 (解决数字转换问题)
+    // 3. 修正后的添加流动性函数 (解决数字转换和错误提示问题)
     // ==========================================================
     async function handleAddLiquidity() {
         const { ammContract } = getContracts(true);
@@ -347,14 +350,13 @@
 
         updateStatus("正在添加流动性...");
         try {
-            // 🚨 关键修复：使用 toFixed(DECIMALS) 确保浮点数转换成精确的字符串，防止出现科学计数法或精度损失导致 parseUnits 失败。
+            // 🚨 关键修复：确保浮点数转换成精确的字符串，防止出现科学计数法或精度损失
             const amountA_str = numA.toFixed(DECIMALS > 20 ? 20 : DECIMALS); 
             const amountB_str = numB.toFixed(DECIMALS > 20 ? 20 : DECIMALS); 
 
             const amountA_wei = ethers.parseUnits(amountA_str, DECIMALS);
             const amountB_wei = ethers.parseUnits(amountB_str, DECIMALS);
 
-            // 再次检查转换后的值是否符合预期 (例如，输入10不应该变成10000个代币的 Wei)
             console.log(`Debug: Token A Wei: ${amountA_wei.toString()}, Token B Wei: ${amountB_wei.toString()}`);
 
             const tx = await ammContract.addLiquidity(amountA_wei, amountB_wei);
@@ -365,8 +367,20 @@
         } catch (error) {
             console.error("添加流动性失败:", error);
             
-            // 提示授权/余额不足
-            updateStatus(`添加流动性失败。**请确保您的授权金额大于输入金额，且您的钱包代币余额充足。**`, true);
+            // 🚨 增强的错误提示，以捕获您的新合约返回的明确错误
+            let errorMessage = "添加流动性失败。";
+            
+            if (error.reason) {
+                // 如果 Ethers.js 捕获到明确的 Revert Reason (来自您新合约的 require 语句)
+                errorMessage += `**错误原因: ${error.reason}**`;
+            } else if (error.message && error.message.includes("missing revert data") && error.message.includes("CALL_EXCEPTION")) {
+                errorMessage += "合约回退（无明确数据）。**请检查：1. 授权是否已更新到新合约 2. 钱包中是否有足够余额。**";
+            } else {
+                 // 默认提示，包括授权和余额
+                 errorMessage += `请确保已重新授权新的 AMM 合约，并拥有足够的代币余额。详细错误: ${error.message.substring(0, 50)}...`;
+            }
+            
+            updateStatus(errorMessage, true);
         }
     }
     
@@ -456,8 +470,11 @@
 
     // 4. 事件监听器
     dom.connectButton.addEventListener('click', connectWallet);
+    
+    // 确保授权是针对新的AMM合约地址
     dom.approveA.addEventListener('click', () => handleApprove(getContracts(true).tokenAContract, "Token A"));
     dom.approveB.addEventListener('click', () => handleApprove(getContracts(true).tokenBContract, "Token B"));
+    
     dom.addLiquidityBtn.addEventListener('click', handleAddLiquidity);
     dom.removeLiquidityBtn.addEventListener('click', handleRemoveLiquidity);
     dom.executeSwapBtn.addEventListener('click', handleSwap);
