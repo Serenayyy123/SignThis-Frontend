@@ -3,17 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AMM 兑换与流动性界面 - 嵌入式版本</title>
-    <script>
-        // Ethers.js v6.7.0 UMD 版本的精简代码 (已嵌入)
-        // 这是一个非常大的代码块，用于替代 <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js"></script>
-        // 省略约 20000 行 Ethers.js 库代码，以保证回复篇幅。
-        // ... (在您的实际文件中，这里将是完整的 Ethers.js 库代码)
-        // 您需要手动下载 ethers-6.7.0.umd.min.js 的内容并粘贴到这里。
-        // **请注意：** 如果我不粘贴完整代码块，GitHub Pages 仍然无法运行。
-        // 由于此处无法粘贴完整的 Ethers.js 库代码（太长），**请您采取手动下载并粘贴的方法：**
-    </script>
-    <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js" type="application/javascript"></script>
+    <title>AMM 兑换与流动性界面 - 最终稳定版</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js" type="application/javascript"></script>
+
     <style>
         /* CSS 样式，保持简洁和可读性 */
         body {
@@ -141,18 +134,9 @@
 </div>
 
 <script>
-    // 🚨🚨 关键步骤：由于您报告连接被重置，您需要手动下载 Ethers.js 库的内容
-    // 并将其替换掉这一个 <script> 标签
-    // **如果您的网络在加载 CDN 库时没有问题，您可以忽略上面那个大的代码块。**
-    
-    // 如果您不能嵌入代码，请**暂时忽略** ERR_CONNECTION_RESET 错误，并继续调试钱包连接。
-    // 但是，如果 Ethers.js 没有加载成功，下面的代码是无法运行的。
-    
-    // 如果您确认 Ethers.js 无法加载，**请关闭您的 VPN/代理或检查您的防火墙设置。**
-    
-    
+    // 检查 Ethers.js 是否已加载 (现在使用 cdnjs 链接)
     const { ethers } = window;
-
+    
     // ==========================================================
     // 1. 您的配置信息 
     // ==========================================================
@@ -161,7 +145,9 @@
     const TOKEN_B_ADDRESS = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 
     const DECIMALS = 18;
-    const MAX_UINT256 = ethers.MaxUint256; 
+    // 使用 BigInt 代替 ethers.MaxUint256，以防 Ethers.js 加载失败
+    // 但如果 Ethers.js 失败，下面的所有代码都无法运行
+    const MAX_UINT256 = ethers ? ethers.MaxUint256 : (2n**256n - 1n); 
     const SLIPPAGE_TOLERANCE = 0.995; 
     
     // 简化 ERC20 ABI
@@ -251,7 +237,7 @@
     }
 
     function getContracts(useSigner = true) {
-        if (!provider) return {};
+        if (!provider || !ethers) return {};
         const actor = useSigner && signer ? signer : provider;
         
         const ammContract = new ethers.Contract(AMM_ADDRESS, AMM_ABI, actor);
@@ -266,15 +252,14 @@
     // ==========================================================
     async function connectWallet() {
         if (typeof ethers === 'undefined' || !window.ethereum) {
-             updateStatus("Ethers.js 或钱包扩展程序未加载。请检查网络和安装。", true);
-             // 如果您的浏览器无法加载 ethers.js，这里的代码将无法执行。
+             updateStatus("Ethers.js 未加载或钱包扩展程序未安装。", true);
              return;
         }
 
         try {
             updateStatus("连接中，请在钱包中确认授权...");
             
-            // 使用原始请求方法连接
+            // 使用原始请求方法连接 (兼容 OneKey/MetaMask)
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
             
             if (accounts && accounts.length > 0) {
@@ -300,12 +285,12 @@
             if (error.code === 4001) {
                 updateStatus("连接被用户拒绝。", true);
             } else {
-                updateStatus(`连接失败。错误: ${error.message || "未知错误"}`, true);
+                updateStatus(`连接失败。请检查钱包是否解锁且网络正确。`, true);
             }
         }
     }
 
-    // 3. 获取池子数据
+    // 以下函数与之前版本相同
     async function fetchPoolData() {
         const { ammContract } = getContracts(false); 
         if (!ammContract) return;
@@ -332,7 +317,6 @@
         }
     }
 
-    // 4. 授权功能
     async function handleApprove(tokenContract, tokenName) {
         if (!signer) return;
 
@@ -347,7 +331,6 @@
         }
     }
 
-    // 5. 添加流动性
     async function handleAddLiquidity() {
         const { ammContract } = getContracts(true);
         const inputA = dom.inputAAdd.value;
@@ -374,7 +357,6 @@
         }
     }
     
-    // 6. 移除流动性
     async function handleRemoveLiquidity() {
         const { ammContract } = getContracts(true);
         const lpInput = dom.inputLPRemove.value;
@@ -399,7 +381,6 @@
         }
     }
     
-    // 7. 兑换逻辑
     async function handleSwap() {
         const { ammContract } = getContracts(true);
         const amountIn = dom.inputSwap.value;
