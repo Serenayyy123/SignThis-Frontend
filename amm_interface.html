@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AMM 兑换与流动性界面 - 最终稳定版</title>
+    <title>AMM 兑换与流动性界面 - 最终稳定版 (v4)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js" type="application/javascript"></script>
 
@@ -140,10 +140,12 @@
     // 1. 您的配置信息 
     // ==========================================================
     // 🚨 关键更新：AMM 合约地址
-    const AMM_ADDRESS = "0xb1C2908d9Ac467f1483Be7B2A1aaeE947452F265";
+    const AMM_ADDRESS = "0x8181A6147f1649DC771c716290fA0D9E42640559";
     
+    // Token A 地址 (保持不变)
     const TOKEN_A_ADDRESS = "0x113ecc7d890ced42a4822877370eff5db5fc6b06";
-    const TOKEN_B_ADDRESS = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+    // Token B 新地址
+    const TOKEN_B_ADDRESS = "0xa6e27e0808ab5c5874793e08d2084ffd72489290";
 
     const DECIMALS = 18;
     
@@ -158,7 +160,7 @@
         "function decimals() external view returns (uint8)", 
     ];
 
-    // 您的 AMM 合约的完整 JSON ABI (无需修改)
+    // 您的 AMM 合约的完整 JSON ABI (保持不变)
     const AMM_ABI = [
         {"inputs": [{"internalType": "uint256", "name": "amountA", "type": "uint256"}, {"internalType": "uint256", "name": "amountB", "type": "uint256"}], "name": "addLiquidity", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
         {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
@@ -367,17 +369,15 @@
         } catch (error) {
             console.error("添加流动性失败:", error);
             
-            // 🚨 增强的错误提示，以捕获您的新合约返回的明确错误
             let errorMessage = "添加流动性失败。";
             
             if (error.reason) {
-                // 如果 Ethers.js 捕获到明确的 Revert Reason (来自您新合约的 require 语句)
                 errorMessage += `**错误原因: ${error.reason}**`;
-            } else if (error.message && error.message.includes("missing revert data") && error.message.includes("CALL_EXCEPTION")) {
-                errorMessage += "合约回退（无明确数据）。**请检查：1. 授权是否已更新到新合约 2. 钱包中是否有足够余额。**";
+            } else if (error.message && error.message.includes("missing revert data")) {
+                // 现在最常见的原因是未给新 AMM 地址授权
+                errorMessage += "合约回退（无明确数据）。**请检查：1. 是否已为新的 AMM 地址重新授权 Token A/B 2. 钱包中是否有足够的余额。**";
             } else {
-                 // 默认提示，包括授权和余额
-                 errorMessage += `请确保已重新授权新的 AMM 合约，并拥有足够的代币余额。详细错误: ${error.message.substring(0, 50)}...`;
+                 errorMessage += `请确保已重新授权，并拥有足够的代币余额。详细错误: ${error.message.substring(0, 50)}...`;
             }
             
             updateStatus(errorMessage, true);
