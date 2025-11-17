@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AMM 兑换与流动性界面 - V2</title>
+    <title>AMM 兑换与流动性界面 - 最终修正版</title>
     <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js" type="application/javascript"></script>
     <style>
-        /* CSS 样式保持不变 */
+        /* CSS 样式，保持简洁和可读性 */
         body {
             font-family: 'Arial', sans-serif;
             background-color: #f7f9fc;
@@ -154,7 +154,7 @@
         "function decimals() external view returns (uint8)", 
     ];
 
-    // 您的 AMM 合约的完整 JSON ABI (已粘贴)
+    // 您的 AMM 合约的完整 JSON ABI
     const AMM_ABI = [
         {"inputs": [{"internalType": "uint256", "name": "amountA", "type": "uint256"}, {"internalType": "uint256", "name": "amountB", "type": "uint256"}], "name": "addLiquidity", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
         {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
@@ -197,7 +197,7 @@
     let reserves = { A: 0, B: 0 };
     let isAtoB = true; 
 
-    // DOM 元素引用
+    // DOM 元素引用 (保持不变)
     const dom = {
         status: document.getElementById('status'),
         connectButton: document.getElementById('connect-wallet'),
@@ -217,14 +217,13 @@
         executeSwapBtn: document.getElementById('execute-swap'),
     };
 
-    // 辅助函数：更新状态信息
+    // 辅助函数 (保持不变)
     function updateStatus(message, isError = false) {
         dom.status.textContent = message;
         dom.status.style.backgroundColor = isError ? '#ffe9e9' : '#e9f5ff';
         dom.status.style.color = isError ? '#cc0000' : '#0056b3';
     }
 
-    // 辅助函数：启用/禁用按钮
     function setButtonsEnabled(enabled) {
         dom.approveA.disabled = !enabled;
         dom.approveB.disabled = !enabled;
@@ -233,16 +232,229 @@
         dom.executeSwapBtn.disabled = !enabled;
     }
 
-    // 获取合约实例
     function getContracts(useSigner = true) {
         if (!provider) return {};
-        // 🚨 修正：始终检查 signer 是否存在，否则使用 provider (只读)
         const actor = useSigner && signer ? signer : provider;
         
-        // AMM 合约使用完整的 JSON ABI
         const ammContract = new ethers.Contract(AMM_ADDRESS, AMM_ABI, actor);
-        // Token 合约使用精简的 ERC20 ABI
         const tokenAContract = new ethers.Contract(TOKEN_A_ADDRESS, ERC20_ABI, actor);
         const tokenBContract = new ethers.Contract(TOKEN_B_ADDRESS, ERC20_ABI, actor);
         
-        return { ammContract, token
+        return { ammContract, tokenAContract, tokenBContract };
+    }
+
+    // ==========================================================
+    // 2. 连接钱包 (最终修正版)
+    // ==========================================================
+    async function connectWallet() {
+        if (!window.ethereum) {
+            updateStatus("请安装 OneKey 或 MetaMask 钱包!", true);
+            return;
+        }
+
+        try {
+            updateStatus("连接中，请在钱包中确认授权...");
+            
+            // 1. 请求账户权限 (OneKey/MetaMask 兼容性更高的底层请求)
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            
+            if (accounts && accounts.length > 0) {
+                 // 2. 使用 BrowserProvider 获取签名者
+                 provider = new ethers.BrowserProvider(window.ethereum);
+                 signer = await provider.getSigner();
+                 account = accounts[0]; 
+                 
+                 setButtonsEnabled(true);
+                 dom.connectButton.textContent = `✅ 已连接: ${account.substring(0, 6)}...${account.substring(38)}`;
+                 dom.connectButton.disabled = true;
+                 updateStatus(`连接成功! 账户: ${account}`);
+                 
+                 // 监听钱包变化
+                 window.ethereum.on('accountsChanged', () => window.location.reload());
+                 window.ethereum.on('chainChanged', () => window.location.reload());
+
+                 fetchPoolData();
+            } else {
+                 updateStatus("钱包未提供账户信息，连接失败。", true);
+            }
+
+        } catch (error) {
+            console.error("连接失败:", error);
+            // 4001 是用户拒绝连接的常见错误码
+            if (error.code === 4001) {
+                updateStatus("连接被用户拒绝。", true);
+            } else {
+                updateStatus(`连接失败。请检查钱包是否解锁，网络是否正确。`, true);
+            }
+        }
+    }
+
+    // 以下函数 (3-8) 保持不变
+    async function fetchPoolData() {
+        const { ammContract } = getContracts(false); 
+        if (!ammContract) return;
+
+        try {
+            const [reserveA_raw, reserveB_raw] = await ammContract.getReserves();
+            
+            reserves.A = ethers.formatUnits(reserveA_raw, DECIMALS);
+            reserves.B = ethers.formatUnits(reserveB_raw, DECIMALS);
+
+            dom.reserveA.textContent = reserves.A;
+            dom.reserveB.textContent = reserves.B;
+
+            if (account) {
+                const lpBalanceRaw = await ammContract.balanceOf(account); 
+                dom.lpBalance.textContent = ethers.formatUnits(lpBalanceRaw, DECIMALS);
+            }
+
+        } catch (error) {
+            console.error("无法获取池子数据:", error);
+            if (account) {
+                updateStatus("无法读取合约数据，请检查网络和合约地址是否正确。", true);
+            }
+        }
+    }
+
+    async function handleApprove(tokenContract, tokenName) {
+        if (!signer) return;
+
+        updateStatus(`正在发送 ${tokenName} 授权交易...`);
+        try {
+            const tx = await tokenContract.approve(AMM_ADDRESS, MAX_UINT256);
+            await tx.wait();
+            updateStatus(`${tokenName} 授权成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
+        } catch (error) {
+            console.error(`${tokenName} 授权失败:`, error);
+            updateStatus(`${tokenName} 授权失败。`, true);
+        }
+    }
+
+    async function handleAddLiquidity() {
+        const { ammContract } = getContracts(true);
+        const inputA = dom.inputAAdd.value;
+        const inputB = dom.inputBAdd.value;
+
+        if (!ammContract || !inputA || !inputB) {
+            updateStatus("请输入有效的代币数量。", true);
+            return;
+        }
+
+        updateStatus("正在添加流动性...");
+        try {
+            const amountA_wei = ethers.parseUnits(inputA, DECIMALS);
+            const amountB_wei = ethers.parseUnits(inputB, DECIMALS);
+
+            const tx = await ammContract.addLiquidity(amountA_wei, amountB_wei);
+            await tx.wait();
+            
+            updateStatus(`流动性添加成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
+            fetchPoolData(); 
+        } catch (error) {
+            console.error("添加流动性失败:", error);
+            updateStatus("添加流动性失败。请确认已授权且余额充足。", true);
+        }
+    }
+    
+    async function handleRemoveLiquidity() {
+        const { ammContract } = getContracts(true);
+        const lpInput = dom.inputLPRemove.value;
+        
+        if (!ammContract || !lpInput) {
+            updateStatus("请输入要移除的 LP 代币数量。", true);
+            return;
+        }
+
+        updateStatus("正在移除流动性...");
+        try {
+            const lpAmount_wei = ethers.parseUnits(lpInput, DECIMALS);
+
+            const tx = await ammContract.removeLiquidity(lpAmount_wei);
+            await tx.wait();
+
+            updateStatus(`流动性移除成功! Tx Hash: ${tx.hash.substring(0, 10)}...`);
+            fetchPoolData();
+        } catch (error) {
+            console.error("移除流动性失败:", error);
+            updateStatus("移除流动性失败。", true);
+        }
+    }
+    
+    async function handleSwap() {
+        const { ammContract } = getContracts(true);
+        const amountIn = dom.inputSwap.value;
+
+        if (!ammContract || !amountIn) {
+            updateStatus("请输入兑换数量。", true);
+            return;
+        }
+        
+        updateStatus("正在计算最小输出量...");
+        const amountIn_wei = ethers.parseUnits(amountIn, DECIMALS);
+        
+        const reserveA_raw = ethers.parseUnits(reserves.A, DECIMALS);
+        const reserveB_raw = ethers.parseUnits(reserves.B, DECIMALS);
+
+        const reserveIn = isAtoB ? reserveA_raw : reserveB_raw;
+        const reserveOut = isAtoB ? reserveB_raw : reserveA_raw;
+        
+        const FEE_NUMERATOR = 997n; 
+        const FEE_DENOMINATOR = 1000n;
+        
+        const amountIn_withFee = amountIn_wei * FEE_NUMERATOR / FEE_DENOMINATOR;
+        
+        const numerator = reserveOut * amountIn_withFee;
+        const denominator = reserveIn + amountIn_withFee;
+        
+        const amountOut_wei = numerator / denominator;
+        
+        const minOut_wei = amountOut_wei * BigInt(Math.floor(SLIPPAGE_TOLERANCE * 10000)) / 10000n; 
+        
+        updateStatus("正在发送兑换交易...");
+        try {
+            let tx;
+            if (isAtoB) {
+                tx = await ammContract.swapAforB(amountIn_wei, minOut_wei);
+            } else {
+                tx = await ammContract.swapBforA(amountIn_wei, minOut_wei);
+            }
+            
+            await tx.wait();
+            updateStatus(`兑换成功! 收到约 ${ethers.formatUnits(amountOut_wei, DECIMALS)} 个 Token ${isAtoB ? 'B' : 'A'}. Tx Hash: ${tx.hash.substring(0, 10)}...`);
+            fetchPoolData();
+        } catch (error) {
+            console.error("兑换失败:", error);
+            updateStatus("兑换失败。可能原因：滑点过大、余额不足、未授权。", true);
+        }
+    }
+
+    // 8. 事件监听器 (保持不变)
+    dom.connectButton.addEventListener('click', connectWallet);
+    dom.approveA.addEventListener('click', () => handleApprove(getContracts(true).tokenAContract, "Token A"));
+    dom.approveB.addEventListener('click', () => handleApprove(getContracts(true).tokenBContract, "Token B"));
+    dom.addLiquidityBtn.addEventListener('click', handleAddLiquidity);
+    dom.removeLiquidityBtn.addEventListener('click', handleRemoveLiquidity);
+    dom.swapAtoBBtn.addEventListener('click', () => {
+        isAtoB = true;
+        dom.swapAtoBBtn.className = 'btn-active-direction';
+        dom.swapBtoABtn.className = 'btn-direction';
+        dom.executeSwapBtn.textContent = '执行兑换 (A → B)';
+        dom.inputSwap.placeholder = '输入 Token A 数量';
+    });
+    dom.swapBtoABtn.addEventListener('click', () => {
+        isAtoB = false;
+        dom.swapAtoBBtn.className = 'btn-direction';
+        dom.swapBtoABtn.className = 'btn-active-direction';
+        dom.executeSwapBtn.textContent = '执行兑换 (B → A)';
+        dom.inputSwap.placeholder = '输入 Token B 数量';
+    });
+    dom.executeSwapBtn.addEventListener('click', handleSwap);
+
+    // 初始化时禁用所有功能按钮
+    document.addEventListener('DOMContentLoaded', () => {
+        setButtonsEnabled(false);
+    });
+</script>
+
+</body>
+</html>
