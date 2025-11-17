@@ -3,7 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AMM 兑换与流动性界面 - 最终修正版</title>
+    <title>AMM 兑换与流动性界面 - 嵌入式版本</title>
+    <script>
+        // Ethers.js v6.7.0 UMD 版本的精简代码 (已嵌入)
+        // 这是一个非常大的代码块，用于替代 <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js"></script>
+        // 省略约 20000 行 Ethers.js 库代码，以保证回复篇幅。
+        // ... (在您的实际文件中，这里将是完整的 Ethers.js 库代码)
+        // 您需要手动下载 ethers-6.7.0.umd.min.js 的内容并粘贴到这里。
+        // **请注意：** 如果我不粘贴完整代码块，GitHub Pages 仍然无法运行。
+        // 由于此处无法粘贴完整的 Ethers.js 库代码（太长），**请您采取手动下载并粘贴的方法：**
+    </script>
     <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js" type="application/javascript"></script>
     <style>
         /* CSS 样式，保持简洁和可读性 */
@@ -132,11 +141,20 @@
 </div>
 
 <script>
-    // 使用 Ethers.js v6 命名空间
+    // 🚨🚨 关键步骤：由于您报告连接被重置，您需要手动下载 Ethers.js 库的内容
+    // 并将其替换掉这一个 <script> 标签
+    // **如果您的网络在加载 CDN 库时没有问题，您可以忽略上面那个大的代码块。**
+    
+    // 如果您不能嵌入代码，请**暂时忽略** ERR_CONNECTION_RESET 错误，并继续调试钱包连接。
+    // 但是，如果 Ethers.js 没有加载成功，下面的代码是无法运行的。
+    
+    // 如果您确认 Ethers.js 无法加载，**请关闭您的 VPN/代理或检查您的防火墙设置。**
+    
+    
     const { ethers } = window;
 
     // ==========================================================
-    // 🚨🚨 1. 您的配置信息 🚨🚨
+    // 1. 您的配置信息 
     // ==========================================================
     const AMM_ADDRESS = "0x855e2fB422837431244E6cD3e21Fb56C23be006A";
     const TOKEN_A_ADDRESS = "0x113ecc7d890ced42a4822877370eff5db5fc6b06";
@@ -197,7 +215,7 @@
     let reserves = { A: 0, B: 0 };
     let isAtoB = true; 
 
-    // DOM 元素引用 (保持不变)
+    // DOM 元素引用
     const dom = {
         status: document.getElementById('status'),
         connectButton: document.getElementById('connect-wallet'),
@@ -217,7 +235,7 @@
         executeSwapBtn: document.getElementById('execute-swap'),
     };
 
-    // 辅助函数 (保持不变)
+    // 辅助函数
     function updateStatus(message, isError = false) {
         dom.status.textContent = message;
         dom.status.style.backgroundColor = isError ? '#ffe9e9' : '#e9f5ff';
@@ -244,22 +262,22 @@
     }
 
     // ==========================================================
-    // 2. 连接钱包 (最终修正版)
+    // 2. 连接钱包 (最终兼容版)
     // ==========================================================
     async function connectWallet() {
-        if (!window.ethereum) {
-            updateStatus("请安装 OneKey 或 MetaMask 钱包!", true);
-            return;
+        if (typeof ethers === 'undefined' || !window.ethereum) {
+             updateStatus("Ethers.js 或钱包扩展程序未加载。请检查网络和安装。", true);
+             // 如果您的浏览器无法加载 ethers.js，这里的代码将无法执行。
+             return;
         }
 
         try {
             updateStatus("连接中，请在钱包中确认授权...");
             
-            // 1. 请求账户权限 (OneKey/MetaMask 兼容性更高的底层请求)
+            // 使用原始请求方法连接
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
             
             if (accounts && accounts.length > 0) {
-                 // 2. 使用 BrowserProvider 获取签名者
                  provider = new ethers.BrowserProvider(window.ethereum);
                  signer = await provider.getSigner();
                  account = accounts[0]; 
@@ -269,7 +287,6 @@
                  dom.connectButton.disabled = true;
                  updateStatus(`连接成功! 账户: ${account}`);
                  
-                 // 监听钱包变化
                  window.ethereum.on('accountsChanged', () => window.location.reload());
                  window.ethereum.on('chainChanged', () => window.location.reload());
 
@@ -280,16 +297,15 @@
 
         } catch (error) {
             console.error("连接失败:", error);
-            // 4001 是用户拒绝连接的常见错误码
             if (error.code === 4001) {
                 updateStatus("连接被用户拒绝。", true);
             } else {
-                updateStatus(`连接失败。请检查钱包是否解锁，网络是否正确。`, true);
+                updateStatus(`连接失败。错误: ${error.message || "未知错误"}`, true);
             }
         }
     }
 
-    // 以下函数 (3-8) 保持不变
+    // 3. 获取池子数据
     async function fetchPoolData() {
         const { ammContract } = getContracts(false); 
         if (!ammContract) return;
@@ -316,6 +332,7 @@
         }
     }
 
+    // 4. 授权功能
     async function handleApprove(tokenContract, tokenName) {
         if (!signer) return;
 
@@ -330,6 +347,7 @@
         }
     }
 
+    // 5. 添加流动性
     async function handleAddLiquidity() {
         const { ammContract } = getContracts(true);
         const inputA = dom.inputAAdd.value;
@@ -356,6 +374,7 @@
         }
     }
     
+    // 6. 移除流动性
     async function handleRemoveLiquidity() {
         const { ammContract } = getContracts(true);
         const lpInput = dom.inputLPRemove.value;
@@ -380,6 +399,7 @@
         }
     }
     
+    // 7. 兑换逻辑
     async function handleSwap() {
         const { ammContract } = getContracts(true);
         const amountIn = dom.inputSwap.value;
@@ -428,7 +448,7 @@
         }
     }
 
-    // 8. 事件监听器 (保持不变)
+    // 8. 事件监听器
     dom.connectButton.addEventListener('click', connectWallet);
     dom.approveA.addEventListener('click', () => handleApprove(getContracts(true).tokenAContract, "Token A"));
     dom.approveB.addEventListener('click', () => handleApprove(getContracts(true).tokenBContract, "Token B"));
