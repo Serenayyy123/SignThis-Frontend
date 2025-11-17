@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMM 兑换与流动性界面 - V2</title>
+    <script src="https://cdn.ethers.io/lib/ethers-6.7.0.umd.min.js" type="application/javascript"></script>
+    <style>
+        /* CSS 样式保持不变 */
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f7f9fc;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            text-align: center;
+            color: #007bff;
+            margin-bottom: 25px;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 6px;
+            background-color: #e9f5ff;
+            color: #0056b3;
+            border: 1px solid #cce5ff;
+        }
+        .section {
+            padding: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            background-color: #fcfcfc;
+        }
+        input[type="number"], .input-group button {
+            padding: 10px;
+            margin-right: 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            width: 150px;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 5px;
+        }
+        .btn-connect { background-color: #28a745; color: white; }
+        .btn-connect:hover { background-color: #218838; }
+        .btn-approve { background-color: #ffc107; color: #333; }
+        .btn-approve:hover { background-color: #e0a800; }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-primary:hover { background-color: #0056b3; }
+        .btn-direction { background-color: #f8f9fa; border: 1px solid #ccc; color: #333; margin: 0 5px 10px 0; }
+        .btn-active-direction { background-color: #007bff; color: white; border: 1px solid #007bff; margin: 0 5px 10px 0; }
+        .reserves p { margin: 5px 0; font-size: 1.1em; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🚀 自动做市商 (AMM) 界面</h2>
+    
+    <div id="status" class="status">请连接您的钱包...</div>
+    
+    <div id="wallet-info" style="text-align: center; margin-bottom: 20px;">
+        <button id="connect-wallet" class="btn-connect">连接钱包</button>
+    </div>
+
+    <hr>
+    
+    <div class="section reserves">
+        <h3>🏦 池子状态</h3>
+        <p>Token A 储备: <strong id="reserve-a">0</strong></p>
+        <p>Token B 储备: <strong id="reserve-b">0</strong></p>
+        <p>您的 LP 代币余额: <strong id="lp-balance">0</strong></p>
+    </div>
+
+    <hr>
+
+    <div class="section">
+        <h3>🔒 步骤 1: 授权代币</h3>
+        <button id="approve-a" class="btn-approve" disabled>授权 Token A</button>
+        <button id="approve-b" class="btn-approve" disabled>授权 Token B</button>
+        <p style="font-size: 0.8em; color: gray; margin-top: 10px;">必须授权 AMM 合约才能使用您的代币。</p>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h3>➕ 步骤 2: 添加流动性</h3>
+        <input type="number" id="input-a-add" placeholder="Token A 数量">
+        <input type="number" id="input-b-add" placeholder="Token B 数量">
+        <button id="add-liquidity" class="btn-primary" disabled>添加流动性</button>
+    </div>
+    
+    <hr>
+    
+    <div class="section">
+        <h3>➖ 步骤 3: 移除流动性</h3>
+        <input type="number" id="input-lp-remove" placeholder="LP Token 数量">
+        <button id="remove-liquidity" class="btn-primary" disabled>移除流动性</button>
+    </div>
+
+    <hr>
+    
+    <div class="section">
+        <h3>🔄 步骤 4: 兑换代币</h3>
+        <div style="margin-bottom: 10px;">
+            <button id="swap-a-to-b" class="btn-active-direction">A → B</button>
+            <button id="swap-b-to-a" class="btn-direction">B → A</button>
+        </div>
+        
+        <input type="number" id="input-swap" placeholder="输入兑换数量">
+        <p style="font-size: 0.9em; color: #6c757d;">预计收到的数量将根据滑点容忍度计算。</p>
+
+        <button id="execute-swap" class="btn-primary" disabled>执行兑换 (A → B)</button>
+    </div>
+
+</div>
+
+<script>
+    // 使用 Ethers.js v6 命名空间
+    const { ethers } = window;
+
+    // ==========================================================
+    // 🚨🚨 1. 您的配置信息 🚨🚨
+    // ==========================================================
+    const AMM_ADDRESS = "0x855e2fB422837431244E6cD3e21Fb56C23be006A";
+    const TOKEN_A_ADDRESS = "0x113ecc7d890ced42a4822877370eff5db5fc6b06";
+    const TOKEN_B_ADDRESS = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+
+    const DECIMALS = 18;
+    const MAX_UINT256 = ethers.MaxUint256; 
+    const SLIPPAGE_TOLERANCE = 0.995; 
+    
+    // 简化 ERC20 ABI
+    const ERC20_ABI = [
+        "function approve(address spender, uint256 value) external returns (bool)",
+        "function allowance(address owner, address spender) external view returns (uint256)",
+        "function balanceOf(address account) external view returns (uint256)",
+        "function decimals() external view returns (uint8)", 
+    ];
+
+    // 您的 AMM 合约的完整 JSON ABI (已粘贴)
+    const AMM_ABI = [
+        {"inputs": [{"internalType": "uint256", "name": "amountA", "type": "uint256"}, {"internalType": "uint256", "name": "amountB", "type": "uint256"}], "name": "addLiquidity", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"internalType": "address", "name": "_tokenA", "type": "address"}, {"internalType": "address", "name": "_tokenB", "type": "address"}, {"internalType": "string", "name": "_name", "type": "string"}, {"internalType": "string", "name": "_symbol", "type": "string"}], "stateMutability": "nonpayable", "type": "constructor"},
+        {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}, {"internalType": "uint256", "name": "allowance", "type": "uint256"}, {"internalType": "uint256", "name": "needed", "type": "uint256"}], "name": "ERC20InsufficientAllowance", "type": "error"},
+        {"inputs": [{"internalType": "address", "name": "sender", "type": "address"}, {"internalType": "uint256", "name": "balance", "type": "uint256"}, {"internalType": "uint256", "name": "needed", "type": "uint256"}], "name": "ERC20InsufficientBalance", "type": "error"},
+        {"inputs": [{"internalType": "address", "name": "approver", "type": "address"}], "name": "ERC20InvalidApprover", "type": "error"},
+        {"inputs": [{"internalType": "address", "name": "receiver", "type": "address"}], "name": "ERC20InvalidReceiver", "type": "error"},
+        {"inputs": [{"internalType": "address", "name": "sender", "type": "address"}], "name": "ERC20InvalidSender", "type": "error"},
+        {"inputs": [{"internalType": "address", "name": "spender", "type": "address"}], "name": "ERC20InvalidSpender", "type": "error"},
+        {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "owner", "type": "address"}, {"indexed": true, "internalType": "address", "name": "spender", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Approval", "type": "event"},
+        {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "provider", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "amountA", "type": "uint256"}, {"indexed": false, "internalType": "uint256", "name": "amountB", "type": "uint256"}, {"indexed": false, "internalType": "uint256", "name": "liquidity", "type": "uint256"}], "name": "LiquidityAdded", "type": "event"},
+        {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "provider", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "amountA", "type": "uint256"}, {"indexed": false, "internalType": "uint256", "name": "amountB", "type": "uint256"}, {"indexed": false, "internalType": "uint256", "name": "liquidity", "type": "uint256"}], "name": "LiquidityRemoved", "type": "event"},
+        {"inputs": [{"internalType": "uint256", "name": "liquidityToRemove", "type": "uint256"}], "name": "removeLiquidity", "outputs": [{"internalType": "uint256", "name": "amountAOut", "type": "uint256"}, {"internalType": "uint256", "name": "amountBOut", "type": "uint256"}], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"internalType": "uint256", "name": "amountAIn", "type": "uint256"}, {"internalType": "uint256", "name": "minBOut", "type": "uint256"}], "name": "swapAforB", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"internalType": "uint256", "name": "amountBIn", "type": "uint256"}, {"internalType": "uint256", "name": "minAOut", "type": "uint256"}], "name": "swapBforA", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+        {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "trader", "type": "address"}, {"indexed": false, "internalType": "address", "name": "tokenIn", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "amountIn", "type": "uint256"}, {"indexed": false, "internalType": "address", "name": "tokenOut", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "amountOut", "type": "uint256"}], "name": "TokensSwapped", "type": "event"},
+        {"inputs": [{"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "transfer", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
+        {"anonymous": false, "inputs": [{"indexed": true, "internalType": "address", "name": "from", "type": "address"}, {"indexed": true, "internalType": "address", "name": "to", "type": "address"}, {"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}], "name": "Transfer", "type": "event"},
+        {"inputs": [{"internalType": "address", "name": "from", "type": "address"}, {"internalType": "address", "name": "to", "type": "address"}, {"internalType": "uint256", "name": "value", "type": "uint256"}], "name": "transferFrom", "outputs": [{"internalType": "bool", "name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"internalType": "address", "name": "owner", "type": "address"}, {"internalType": "address", "name": "spender", "type": "address"}], "name": "allowance", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [{"internalType": "address", "name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "decimals", "outputs": [{"internalType": "uint8", "name": "", "type": "uint8"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "getReserves", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}, {"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "name", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "owner", "outputs": [{"internalType": "address", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "reserveA", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "reserveB", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "symbol", "outputs": [{"internalType": "string", "name": "", "type": "string"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "tokenA", "outputs": [{"internalType": "contract IERC20", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "tokenB", "outputs": [{"internalType": "contract IERC20", "name": "", "type": "address"}], "stateMutability": "view", "type": "function"},
+        {"inputs": [], "name": "totalSupply", "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}
+    ];
+    // ==========================================================
+
+    // 状态变量
+    let provider = null;
+    let signer = null;
+    let account = null;
+    let reserves = { A: 0, B: 0 };
+    let isAtoB = true; 
+
+    // DOM 元素引用
+    const dom = {
+        status: document.getElementById('status'),
+        connectButton: document.getElementById('connect-wallet'),
+        reserveA: document.getElementById('reserve-a'),
+        reserveB: document.getElementById('reserve-b'),
+        lpBalance: document.getElementById('lp-balance'),
+        approveA: document.getElementById('approve-a'),
+        approveB: document.getElementById('approve-b'),
+        inputAAdd: document.getElementById('input-a-add'),
+        inputBAdd: document.getElementById('input-b-add'),
+        addLiquidityBtn: document.getElementById('add-liquidity'),
+        inputLPRemove: document.getElementById('input-lp-remove'),
+        removeLiquidityBtn: document.getElementById('remove-liquidity'),
+        swapAtoBBtn: document.getElementById('swap-a-to-b'),
+        swapBtoABtn: document.getElementById('swap-b-to-a'),
+        inputSwap: document.getElementById('input-swap'),
+        executeSwapBtn: document.getElementById('execute-swap'),
+    };
+
+    // 辅助函数：更新状态信息
+    function updateStatus(message, isError = false) {
+        dom.status.textContent = message;
+        dom.status.style.backgroundColor = isError ? '#ffe9e9' : '#e9f5ff';
+        dom.status.style.color = isError ? '#cc0000' : '#0056b3';
+    }
+
+    // 辅助函数：启用/禁用按钮
+    function setButtonsEnabled(enabled) {
+        dom.approveA.disabled = !enabled;
+        dom.approveB.disabled = !enabled;
+        dom.addLiquidityBtn.disabled = !enabled;
+        dom.removeLiquidityBtn.disabled = !enabled;
+        dom.executeSwapBtn.disabled = !enabled;
+    }
+
+    // 获取合约实例
+    function getContracts(useSigner = true) {
+        if (!provider) return {};
+        // 🚨 修正：始终检查 signer 是否存在，否则使用 provider (只读)
+        const actor = useSigner && signer ? signer : provider;
+        
+        // AMM 合约使用完整的 JSON ABI
+        const ammContract = new ethers.Contract(AMM_ADDRESS, AMM_ABI, actor);
+        // Token 合约使用精简的 ERC20 ABI
+        const tokenAContract = new ethers.Contract(TOKEN_A_ADDRESS, ERC20_ABI, actor);
+        const tokenBContract = new ethers.Contract(TOKEN_B_ADDRESS, ERC20_ABI, actor);
+        
+        return { ammContract, token
