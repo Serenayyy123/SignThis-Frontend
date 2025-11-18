@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFT Marketplace 卖家面板</title>
+    <script src="https://unpkg.com/ethers@6.7.0/dist/ethers.umd.min.js" type="application/javascript"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        button { padding: 10px 15px; margin: 5px 0; cursor: pointer; background-color: #4CAF50; color: white; border: none; border-radius: 4px; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        input[type="text"] { width: 100%; padding: 8px; margin: 5px 0 10px 0; display: inline-block; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .section { margin-top: 20px; padding: 15px; border: 1px dashed #ddd; border-radius: 6px; }
+        #status { margin-top: 10px; font-weight: bold; color: blue; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>NFT Marketplace 上架工具</h1>
+    
+    <div class="section">
+        <h2>1. 钱包连接</h2>
+        <button id="connectWalletBtn">连接 MetaMask 钱包</button>
+        <p id="accountInfo">状态: 未连接</p>
+        <p>
+            **注意：** 请确保您的钱包已切换到**合约部署的网络** (例如 Sepolia 测试网)。
+        </p>
+    </div>
+
+    <div class="section">
+        <h2>2. NFT 交易信息</h2>
+        <p>NFT 市场合约地址: <strong style="color: purple;">0xd9145CCE52D386f254917e481eB44e9943F39138</strong></p>
+        <p>NFT 合约地址: <strong id="nftAddressDisplay">0xF1eD68c6173717B084400F3FeC4A3FfecE7b48C7</strong></p>
+        <p>Token ID: <strong id="tokenIdDisplay">1</strong></p>
+
+        <label for="priceInput">价格 (ETH):</label>
+        <input type="text" id="priceInput" value="0.01">
+
+        <label for="royaltyReceiverInput">版税接收地址:</label>
+        <input type="text" id="royaltyReceiverInput" placeholder="请输入版税接收地址" value="0x0000000000000000000000000000000000000000">
+
+        <label for="royaltyPercentInput">版税百分比 (基点, 100 = 1%):</label>
+        <input type="text" id="royaltyPercentInput" value="500" placeholder="例如 500">
+    </div>
+
+    <div class="section">
+        <h2>3. 授权与上架操作</h2>
+        <button id="approveBtn" disabled>授权市场转移 NFT</button>
+        <button id="listBtn" disabled>上架 NFT 到市场</button>
+        <p id="status"></p>
+    </div>
+</div>
+
+<script>
+    // --- 合约配置 ---
+    const MARKETPLACE_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138"; 
+    const NFT_ADDRESS = "0xF1eD68c6173717B084400F3FeC4A3FfecE7b48C7";
+    const TOKEN_ID = 1;
+    
+    // 简化 ABI
+    const ERC721_ABI = [
+        "function setApprovalForAll(address operator, bool approved) public",
+        "function isApprovedForAll(address owner, address operator) view returns (bool)",
+    ];
+
+    const MARKETPLACE_ABI = [
+        "function listNFT(address nftAddress, uint256 tokenId, uint256 price, address royaltyReceiver, uint256 royaltyPercent) external"
+    ];
+
+    // --- 全局变量 ---
+    let provider;
+    let signer;
+    let account;
+
+    // --- DOM 元素 ---
+    const accountInfo = document.getElementById('accountInfo');
+    const statusDiv = document.getElementById('status');
+    const connectWalletBtn = document.getElementById('connectWalletBtn');
+    const approveBtn = document.getElementById('approveBtn');
+    const listBtn = document.getElementById('listBtn');
+    const priceInput = document.getElementById('priceInput');
+    const royaltyReceiverInput = document.getElementById('royaltyReceiverInput');
+    const royaltyPercentInput = document.getElementById('royaltyPercentInput');
+
+
+    /**
+     * 更新状态信息
+     */
+    function updateStatus(message, isError = false) {
+        statusDiv.textContent = message;
+        statusDiv.className = isError ? 'error' : '';
+    }
+
+    /**
+     * 1. 修正后的连接钱包功能
+     */
+    async function connectWallet() {
+        // 检查钱包提供者 (MetaMask) 是否存在
+        if (!window.ethereum) {
+            updateStatus("未检测到 MetaMask。请安装它或使用兼容的浏览器。", true);
+            return;
+        }
+
+        try {
+            updateStatus("正在请求连接和账户权限...");
+            
+            // 关键步骤：请求账户权限。Metamask 将弹出连接窗口。
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+
+            if (accounts.length === 0) {
+                 updateStatus("用户拒绝连接或未选择账户。", true);
+                 return;
+            }
+
+            // 成功获取账户后，初始化 ethers provider 和 signer
+            provider = new ethers.BrowserProvider(window.ethereum);
+            
+            signer = await provider.getSigner();
+            account = accounts[0]; // 使用第一个连接的账户
+
+            accountInfo.innerHTML = `状态: <span style="color: green;">已连接</span> | 地址: <strong>${account.substring(0, 6)}...${account.slice(-4)}</strong>`;
+            updateStatus("连接成功！请检查 MetaMask 确认网络。");
+
+            // 设置版税接收地址默认值
+            if (royaltyReceiverInput.value === "0x0000000000000000000000000000000000000000" || royaltyReceiverInput.value === "") {
+                royaltyReceiverInput.value = account;
+            }
+
+            // 启用后续按钮
+            approveBtn.disabled = false;
+            listBtn.disabled = false;
+            connectWalletBtn.disabled = true;
+
+            // 监听账户变化或网络变化，保持状态同步
+            window.ethereum.on('accountsChanged', handleAccountsChanged);
+            window.ethereum.on('chainChanged', handleChainChanged);
+
+        } catch (error) {
+            console.error("连接钱包失败:", error);
+            // 处理常见的用户拒绝错误 (Error code 4001)
+            if (error.code === 4001) {
+                updateStatus("连接被用户拒绝。", true);
+            } else {
+                updateStatus(`连接钱包失败: ${error.message}`, true);
+            }
+        }
+    }
+
+    /**
+     * 钱包账户变化处理
+     */
+    function handleAccountsChanged(accounts) {
+        if (accounts.length === 0) {
+            alert('账户已断开连接。请重新连接。');
+            window.location.reload(); // 刷新页面以重置状态
+        } else if (account !== accounts[0]) {
+            account = accounts[0];
+            alert(`账户已切换至: ${account.substring(0, 6)}...`);
+            window.location.reload(); // 刷新页面以应用新账户
+        }
+    }
+
+    /**
+     * 钱包网络变化处理
+     */
+    function handleChainChanged(chainId) {
+        alert(`网络已切换至 Chain ID: ${chainId}。请确认这是合约部署的网络。`);
+        window.location.reload(); // 刷新页面以重新初始化 provider
+    }
+
+
+    /**
+     * 2. 授权市场转移 NFT
+     */
+    async function approveMarketplace() {
+        if (!signer) {
+            updateStatus("请先连接钱包。", true);
+            return;
+        }
+
+        try {
+            updateStatus("正在检查授权状态...");
+            
+            const nftContractView = new ethers.Contract(NFT_ADDRESS, ERC721_ABI, provider);
+            const isApproved = await nftContractView.isApprovedForAll(account, MARKETPLACE_ADDRESS);
+            
+            if (isApproved) {
+                updateStatus("市场已获得授权 (setApprovalForAll)，无需重复操作。");
+                return;
+            }
+
+            updateStatus("市场未授权。正在创建授权交易...");
+            const nftContract = new ethers.Contract(NFT_ADDRESS, ERC721_ABI, signer);
+            
+            const tx = await nftContract.setApprovalForAll(MARKETPLACE_ADDRESS, true);
+            
+            updateStatus(`交易已发送 (${tx.hash.substring(0, 6)}...)，请等待确认...`);
+            
+            await tx.wait();
+            
+            updateStatus("✅ 授权成功！现在可以上架 NFT 了。");
+
+        } catch (error) {
+            console.error("授权失败:", error);
+            updateStatus(`授权失败: ${error.message || "交易被拒绝或发生错误。"}`, true);
+        }
+    }
+
+    /**
+     * 3. 上架 NFT
+     */
+    async function listNFT() {
+        if (!signer) {
+            updateStatus("请先连接钱包。", true);
+            return;
+        }
+
+        const priceEth = priceInput.value;
+        const royaltyReceiver = royaltyReceiverInput.value;
+        const royaltyPercent = royaltyPercentInput.value;
+
+        if (parseFloat(priceEth) <= 0 || !ethers.isAddress(royaltyReceiver) || isNaN(parseInt(royaltyPercent))) {
+            updateStatus("请确保价格大于0，版税接收地址有效，并填写正确的版税百分比。", true);
+            return;
+        }
+
+        try {
+            updateStatus("正在创建上架交易...");
+
+            const priceWei = ethers.parseEther(priceEth); // 将 ETH 转换为 Wei
+            const percentBasisPoints = BigInt(royaltyPercent);
+
+            const marketplaceContract = new ethers.Contract(MARKETPLACE_ADDRESS, MARKETPLACE_ABI, signer);
+
+            const tx = await marketplaceContract.listNFT(
+                NFT_ADDRESS,
+                TOKEN_ID,
+                priceWei,
+                royaltyReceiver,
+                percentBasisPoints
+            );
+
+            updateStatus(`上架交易已发送 (${tx.hash.substring(0, 6)}...)，请等待确认...`);
+
+            await tx.wait();
+
+            updateStatus("🎉 NFT 上架成功！", false);
+            
+        } catch (error) {
+            console.error("上架失败:", error);
+            let errorMessage = "交易失败，请检查授权、NFT所有权或合约要求。";
+            if (error.reason) {
+                 errorMessage = `上架失败: ${error.reason}`;
+            } else if (error.message && error.message.includes('insufficient funds')) {
+                 errorMessage = "交易失败：账户 ETH 不足支付 Gas 费。";
+            } else if (error.message && error.message.includes('user rejected transaction')) {
+                 errorMessage = "交易被用户拒绝。";
+            }
+            updateStatus(errorMessage, true);
+        }
+    }
+
+    // --- 事件监听器 ---
+    connectWalletBtn.addEventListener('click', connectWallet);
+    approveBtn.addEventListener('click', approveMarketplace);
+    listBtn.addEventListener('click', listNFT);
+
+    // 页面加载时初始化
+    window.onload = function() {
+        document.getElementById('nftAddressDisplay').textContent = NFT_ADDRESS;
+        document.getElementById('tokenIdDisplay').textContent = TOKEN_ID;
+    };
+</script>
+
+</body>
+</html>
